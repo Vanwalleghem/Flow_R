@@ -1,0 +1,48 @@
+---
+title: "Flow analysis"
+output: html_notebook
+---
+
+Load Clusters of complex stimulus mapped to the Clusters to basic stimulus
+```{r}
+library(R.matlab)
+data <- readMat('D:/Pictures/processed/Flow/complex_AlltrialsinOne/BasicClusters.mat')
+composite_ts <- data$Test
+composite_ts <- data.frame(t(composite_ts))
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+```{r}
+library(forecast)
+library(MSBVAR)
+ts1 <- scale(composite_ts)
+
+select.lags<-function(x,y,max.lag=8) {
+  y<-as.numeric(y)
+  y.lag<-embed(y,max.lag+1)[,-1,drop=FALSE]
+  x.lag<-embed(x,max.lag+1)[,-1,drop=FALSE]
+
+  t<-tail(seq_along(y),nrow(y.lag))
+
+  ms=lapply(1:max.lag,function(i) lm(y[t]~y.lag[,1:i]+x.lag[,1:i]))
+
+  pvals<-mapply(function(i) anova(ms[[i]],ms[[i-1]])[2,"Pr(>F)"],max.lag:2)
+  ind<-which(pvals<0.05)[1]
+  ftest<-ifelse(is.na(ind),1,max.lag-ind+1)
+
+  aic<-as.numeric(lapply(ms,AIC))
+  bic<-as.numeric(lapply(ms,BIC))
+  structure(list(ic=cbind(aic=aic,bic=bic),pvals=pvals,
+    selection=list(aic=which.min(aic),bic=which.min(bic),ftest=ftest)))
+}
+
+s<-select.lags(ts1[,4],ts1[,1],50)
+```
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+```{r}
+library('vars')
+library('tseries')
+```
+
