@@ -42,7 +42,183 @@ s<-select.lags(ts1[,4],ts1[,1],50)
 When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
 
 ```{r}
+library('strucchange')
 library('vars')
 library('tseries')
+library('urca')
+ADF_KPSS <- matrix(nrow=2,ncol = length(composite_ts))
+for (i in 1:length(composite_ts)) {
+  temp <- adf.test(ts1[,i])
+  temp2 <- kpss.test(ts1[,i])
+  ADF_KPSS[1,i]<- temp$p.value
+  ADF_KPSS[2,i]<-temp2$p.value
+}
+ADF_KPSS
+```
+
+since KPSS p-value <0.05 means not stationary, so let's dif
+
+```{r}
+ADF_KPSS <- matrix(nrow=2,ncol = length(composite_ts))
+for (i in 1:length(composite_ts)) {
+  temp <- adf.test(diff(ts1[,i],1))
+  temp2 <- kpss.test(diff(ts1[,i],1))
+  ADF_KPSS[1,i]<- temp$p.value
+  ADF_KPSS[2,i]<-temp2$p.value
+}
+ADF_KPSS
+
+```
+
+Lost the unit root from KPSS, so order of integration is 1
+
+```{r}
+VARselect(ts1[,8],lag=20,type="both")
+```
+
+AIC says lag level is 3 or 5
+
+let's test 3
+
+```{r}
+V.3<-VAR(ts1,p=3,type="both")
+serial.test(V.3)
+```
+
+and 5
+
+```{r}
+V.5<-VAR(ts1,p=5,type="both")
+serial.test(V.5)
+```
+
+Still serial correlation in the residuals, so let's increase
+
+```{r}
+V.8<-VAR(ts1,p=8,type="both")
+serial.test(V.8)
+```
+
+8 is the best, but still p-value <0.05
+
+```{r}
+#Stability analysis
+1/roots(V.5)[[1]] # ">1"
+1/roots(V.5)[[2]] # ">1"
+
+#Alternative stability analyis
+plot(stability(V.5)) ## looks fine
+```
+
+Stability is fine at 5
+
+
+```{r}
+GC_results <- granger.test(ts1,5)
+GC_results_bool <- GC_results
+pvalue=0.01/12
+GC_results_bool[,1] <- GC_results_bool[,2] < pvalue
+
+par(mar = c(15, 5, 5, 1), mfrow = c(1, 1), mgp = c(2.5, 1, 0))
+barplot(GC_results_bool[,1], las=2,cex.names=0.8)
+```
+
+```{r}
+varlst <- colnames(composite_ts)
+GC_results_Fstat <- matrix(nrow=length(varlst),ncol=length(varlst))
+
+counter=1;
+for (i in 1:dim(GC_results)[1]){
+	if (!(i%%(length(varlst)-1))){
+		constant=(length(varlst)-1)
+	} else {
+	constant = i%%(length(varlst)-1)}
+	if (constant>=counter){
+			constant=1+constant
+			}
+		else{
+			constant=0+constant
+			}
+	
+	if (GC_results[i,2]<pvalue){
+		GC_results_Fstat[counter,constant] <- GC_results[i,1]
+	} 
+	 else {
+		 GC_results_Fstat[counter,constant] <- NA
+	 }
+	if (!(i%%(length(varlst)-1))){
+		counter <- counter+1
+	}
+}
+GC_results_Fstat[is.na(GC_results_Fstat)] <- 0
+rownames(GC_results_Fstat) <- varlst
+colnames(GC_results_Fstat) <- varlst
+GC_results_Fstat <- round(GC_results_Fstat, digits=2)
+library('gplots')
+
+my_palette <- colorRampPalette(c("black", "red", "yellow"))(n = 29)
+col_breaks = c(seq(0,1,length=10), # for red
+seq(1.1,max(GC_results_Fstat)/2,length=10),  # for yellow
+seq(max(GC_results_Fstat)/2+0.01,max(GC_results_Fstat),length=10)) # for green
+
+lmat = rbind(c(0,3),c(2,1),c(0,4))
+lwid = c(1.5,4)
+lhei = c(1.5,4,1)
+heatmap.2(GC_results_Fstat,
+  cellnote = GC_results_Fstat,  # same data set for cell labels  
+  notecol="black",      # change font color of cell labels to black
+  density.info="none",  # turns off density plot inside color legend
+  trace="none",         # turns off trace lines inside the heat map
+  margins =c(10,10),     # widens margins around plot
+  col=my_palette,       # use on color palette defined earlier
+  breaks=col_breaks,    # enable color transition at specified limits
+  dendrogram="none",     # only draw a row dendrogram
+  Colv="NA",
+  notecex=2,
+          cexRow=2,
+          cexCol=2,
+		  key.xlab="",
+		  lmat=lmat,
+		  lwid=lwid,
+		  lhei=lhei	 
+  )
+```
+
+```{r}
+library(igraph)
+net <- graph.adjacency(t(GC_results_Fstat), mode="directed", weighted=TRUE)
+igraph::write.graph(net,'ClusterGraph.xml',format='graphml')
+plot(net, edge.label=round(E(net)$weight, 3))
+
+autocurve.edges2 <-function (graph, start = 0.5)
+{
+    cm <- count.multiple(graph)
+    mut <-is.mutual(graph)  #are connections mutual?
+    el <- apply(get.edgelist(graph, names = FALSE), 1, paste,
+	collapse = ":")
+    ord <- order(el)
+    res <- numeric(length(ord))
+    p <- 1
+    while (p <= length(res)) {
+        m <- cm[ord[p]]
+        mut.obs <-mut[ord[p]] #are the connections mutual for this point?
+        idx <- p:(p + m - 1)
+        if (m == 1 & mut.obs==FALSE) { #no mutual conn = no curve
+            r <- 0
+		}
+        else {
+            r <- seq(-start, start, length = m)
+		}
+        res[ord[idx]] <- r
+        p <- p + m
+	}
+    res
+}
+
+deg <- degree(net, mode="all")
+V(net)$size <- deg*1
+E(net)$width <- E(net)$weight*0.5
+curves <-autocurve.edges2(net)
+plot(net, vertex.color="white", edge.label=round(E(net)$weight, 3), edge.curved=curves)
 ```
 
